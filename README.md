@@ -2,7 +2,7 @@
 
 一个最小可用的 Web 服务：上传 PDF，返回可下载的 Markdown 文件。
 
-## 启动
+## 快速启动
 
 ```bash
 python -m venv .venv
@@ -12,6 +12,23 @@ uvicorn main:app --reload
 ```
 
 打开 <http://127.0.0.1:8000>。
+
+## 创建沙箱环境（推荐）
+
+为了避免污染系统 Python，项目提供一键脚本创建独立沙箱：
+
+```bash
+bash scripts/create_sandbox.sh
+source .sandbox/bin/activate
+uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+可自定义目录：
+
+```bash
+bash scripts/create_sandbox.sh .my-sandbox
+source .my-sandbox/bin/activate
+```
 
 ## 并发设计
 
