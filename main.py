@@ -1,4 +1,6 @@
+import asyncio
 from io import BytesIO
+import os
 import re
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -6,6 +8,10 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from pypdf import PdfReader
 
 app = FastAPI(title="PDF to Markdown")
+
+# Protect service capacity under high load. Tunable via env var.
+MAX_CONCURRENT_CONVERSIONS = int(os.getenv("MAX_CONCURRENT_CONVERSIONS", "8"))
+conversion_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONVERSIONS)
 
 
 def text_to_markdown(text: str) -> str:
@@ -123,12 +129,13 @@ async def index() -> str:
 
 @app.post("/convert", response_class=PlainTextResponse)
 async def convert(file: UploadFile = File(...)) -> str:
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
 
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="上传文件为空")
 
-    markdown = pdf_to_markdown(data)
+    async with conversion_semaphore:
+        markdown = await asyncio.to_thread(pdf_to_markdown, data)
     return markdown
