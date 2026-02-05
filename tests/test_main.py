@@ -18,6 +18,16 @@ def make_pdf_bytes() -> bytes:
 
 
 @pytest.mark.asyncio
+async def test_healthz_ok() -> None:
+    transport = ASGITransport(app=main.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/healthz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
 async def test_convert_pdf_success_returns_markdown_page_header() -> None:
     transport = ASGITransport(app=main.app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -65,6 +75,32 @@ async def test_convert_endpoint_handles_requests_concurrently(monkeypatch: pytes
         duration = time.perf_counter() - started
 
     assert statuses == [200, 200, 200, 200, 200]
-    # If requests are serialized due to blocking work in event-loop, this is about 1.0s.
-    # to_thread + semaphore should keep this well below the serialized duration.
     assert duration < 0.7
+
+
+@pytest.mark.asyncio
+async def test_convert_returns_429_when_queue_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    old_sem = main.conversion_semaphore
+    old_timeout = main.CONVERSION_ACQUIRE_TIMEOUT_SECONDS
+    main.conversion_semaphore = asyncio.Semaphore(1)
+    main.CONVERSION_ACQUIRE_TIMEOUT_SECONDS = 0.05
+
+    def very_slow_converter(_: bytes) -> str:
+        time.sleep(0.2)
+        return "# ok\n"
+
+    monkeypatch.setattr(main, "pdf_to_markdown", very_slow_converter)
+
+    try:
+        transport = ASGITransport(app=main.app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            async def one_call() -> int:
+                files = {"file": ("demo.pdf", b"%PDF-1.4 test", "application/pdf")}
+                response = await client.post("/convert", files=files)
+                return response.status_code
+
+            statuses = await asyncio.gather(one_call(), one_call())
+        assert 429 in statuses
+    finally:
+        main.conversion_semaphore = old_sem
+        main.CONVERSION_ACQUIRE_TIMEOUT_SECONDS = old_timeout

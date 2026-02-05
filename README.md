@@ -16,12 +16,13 @@ uvicorn main:app --reload
 ## 并发设计
 
 - `/convert` 接口内部使用 `asyncio.to_thread` 执行 PDF 解析，避免阻塞事件循环。
-- 使用 `MAX_CONCURRENT_CONVERSIONS`（默认 `8`）控制转换并发，防止高并发时资源被打满。
+- 使用 `MAX_CONCURRENT_CONVERSIONS`（默认 `8`）限制转换并发，防止高并发时资源被打满。
+- 获取并发槽位时使用超时控制 `CONVERSION_ACQUIRE_TIMEOUT_SECONDS`（默认 `10` 秒），超时直接返回 `429`，避免无限排队。
 
 示例：
 
 ```bash
-MAX_CONCURRENT_CONVERSIONS=16 uvicorn main:app --host 0.0.0.0 --port 8000
+MAX_CONCURRENT_CONVERSIONS=16 CONVERSION_ACQUIRE_TIMEOUT_SECONDS=3 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
 ## 测试
@@ -30,6 +31,15 @@ MAX_CONCURRENT_CONVERSIONS=16 uvicorn main:app --host 0.0.0.0 --port 8000
 pip install -r requirements.txt -r requirements-dev.txt
 pytest -q
 ```
+
+测试覆盖：
+
+- 健康检查接口
+- PDF 上传成功转换
+- 非 PDF 文件拒绝
+- 文本转 Markdown 规则
+- 并发请求非串行处理
+- 队列超时时返回 429
 
 ## 行为说明
 

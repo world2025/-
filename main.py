@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 from io import BytesIO
 import os
 import re
@@ -9,9 +10,26 @@ from pypdf import PdfReader
 
 app = FastAPI(title="PDF to Markdown")
 
-# Protect service capacity under high load. Tunable via env var.
+# Tunable capacity controls.
 MAX_CONCURRENT_CONVERSIONS = int(os.getenv("MAX_CONCURRENT_CONVERSIONS", "8"))
+CONVERSION_ACQUIRE_TIMEOUT_SECONDS = float(os.getenv("CONVERSION_ACQUIRE_TIMEOUT_SECONDS", "10"))
 conversion_semaphore = asyncio.Semaphore(MAX_CONCURRENT_CONVERSIONS)
+
+
+@asynccontextmanager
+async def conversion_slot():
+    try:
+        await asyncio.wait_for(
+            conversion_semaphore.acquire(),
+            timeout=CONVERSION_ACQUIRE_TIMEOUT_SECONDS,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(status_code=429, detail="服务繁忙，请稍后重试") from exc
+
+    try:
+        yield
+    finally:
+        conversion_semaphore.release()
 
 
 def text_to_markdown(text: str) -> str:
@@ -127,6 +145,11 @@ async def index() -> str:
 """
 
 
+@app.get("/healthz")
+async def healthz() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @app.post("/convert", response_class=PlainTextResponse)
 async def convert(file: UploadFile = File(...)) -> str:
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -136,6 +159,6 @@ async def convert(file: UploadFile = File(...)) -> str:
     if not data:
         raise HTTPException(status_code=400, detail="上传文件为空")
 
-    async with conversion_semaphore:
+    async with conversion_slot():
         markdown = await asyncio.to_thread(pdf_to_markdown, data)
     return markdown
